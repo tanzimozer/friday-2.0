@@ -223,23 +223,26 @@ class RateLimiter:
         now = datetime.utcnow()
         cutoff = now - timedelta(seconds=self.window_seconds)
         
-        # Remove old attempts outside the window
+        # Remove old attempts outside the window (in-place optimization)
         self.attempts = [t for t in self.attempts if t > cutoff]
         
         # Check if we've exceeded limit
         return len(self.attempts) >= self.max_attempts
     
-    def record_attempt(self):
-        """Record a failed attempt."""
-        self.attempts.append(datetime.utcnow())
+    def record_attempt(self, now: Optional[datetime] = None):
+        """Record a failed attempt. Accept optional timestamp to avoid repeated calls."""
+        if now is None:
+            now = datetime.utcnow()
+        self.attempts.append(now)
     
     def reset(self):
         """Reset the attempt counter (successful access clears attempts)."""
         self.attempts = []
     
-    def get_remaining_attempts(self) -> int:
+    def get_remaining_attempts(self, now: Optional[datetime] = None) -> int:
         """Get remaining attempts before lockout."""
-        now = datetime.utcnow()
+        if now is None:
+            now = datetime.utcnow()
         cutoff = now - timedelta(seconds=self.window_seconds)
         self.attempts = [t for t in self.attempts if t > cutoff]
         return max(0, self.max_attempts - len(self.attempts))
@@ -255,8 +258,10 @@ class AccessLogger:
     def _ensure_log_file(self):
         """Create log file if it doesn't exist."""
         if not self.log_file.exists():
+            now = datetime.utcnow()
+            timestamp = now.isoformat() + 'Z'
             initial = {
-                'created': datetime.utcnow().isoformat() + 'Z',
+                'created': timestamp,
                 'last_accessed': None,
                 'access_count': 0,
                 'failed_attempts': 0,
@@ -445,6 +450,11 @@ class EDITHVault:
     - Fernet (AES-256-GCM) encryption
     """
     
+    # Class-level cache for services map (single vault instance optimization)
+    _services_map_cache = {}
+    _services_map_cache_time = None
+    _CACHE_VALIDITY_SECONDS = 3600  # 1 hour TTL
+    
     def __init__(self, vault_dir: Path = None, require_verification: bool = True, override_uuid: str = None):
         """
         Initialize EDITH vault.
@@ -511,9 +521,21 @@ class EDITHVault:
         return metadata
     
     def _load_services_map(self) -> Dict[str, str]:
-        """Load service name → obfuscated key mapping (encrypted)."""
+        """Load service name → obfuscated key mapping (encrypted). Cached for 1h."""
+        # Check cache validity
+        now = datetime.utcnow()
+        vault_key = str(self.vault_dir)
+        
+        if (vault_key in EDITHVault._services_map_cache and 
+            EDITHVault._services_map_cache_time is not None and
+            (now - EDITHVault._services_map_cache_time).total_seconds() < EDITHVault._CACHE_VALIDITY_SECONDS):
+            # Cache hit — return cached map
+            return EDITHVault._services_map_cache[vault_key]
+        
         services_map_path = self.vault_dir / 'services.map.enc'
         if not services_map_path.exists():
+            EDITHVault._services_map_cache[vault_key] = {}
+            EDITHVault._services_map_cache_time = now
             return {}
         
         try:
@@ -521,13 +543,17 @@ class EDITHVault:
                 encrypted_data = f.read()
             # Decrypt the services map (returns dict directly)
             decrypted_map = self.encryption.decrypt(encrypted_data)
-            return decrypted_map if isinstance(decrypted_map, dict) else {}
+            result = decrypted_map if isinstance(decrypted_map, dict) else {}
+            # Update cache
+            EDITHVault._services_map_cache[vault_key] = result
+            EDITHVault._services_map_cache_time = now
+            return result
         except Exception as e:
             self.logger.log_access('read', 'services_map', 'failure', f'Failed to load services map: {str(e)}')
             return {}
     
     def _save_services_map(self):
-        """Save services map to disk (encrypted)."""
+        """Save services map to disk (encrypted). Invalidates cache."""
         services_map_path = self.vault_dir / 'services.map.enc'
         try:
             # Encrypt the services map (encrypt expects a dict)
@@ -535,6 +561,11 @@ class EDITHVault:
             with open(services_map_path, 'w') as f:
                 f.write(encrypted)
             os.chmod(services_map_path, 0o600)
+            # Invalidate cache on write
+            vault_key = str(self.vault_dir)
+            if vault_key in EDITHVault._services_map_cache:
+                del EDITHVault._services_map_cache[vault_key]
+            EDITHVault._services_map_cache_time = None
             self.logger.log_access('write', 'services_map', 'success', 'Services map saved (encrypted)')
         except Exception as e:
             self.logger.log_access('write', 'services_map', 'failure', f'Failed to save services map: {str(e)}')
