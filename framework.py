@@ -345,7 +345,9 @@ class IntentInferenceEngine:
         metrics = {
             **intent_record,
             "lookback_days": 30,
-            "recent_occurrence_count": occurrence_count
+            "recent_occurrence_count": occurrence_count,
+            "confidence_threshold": 0.75,
+            "meets_threshold": pattern_confidence >= 0.75
         }
         
         self.logger.log_decision(
@@ -354,7 +356,7 @@ class IntentInferenceEngine:
             metrics
         )
         
-        return passes_threshold, intent_record
+        return passes_threshold, metrics
     
     def get_inferred_intents(self) -> Dict[str, Dict[str, Any]]:
         """Retrieve all inferred intents."""
@@ -533,12 +535,12 @@ class MVPRelease:
             return 0.0
         return sum(f.completion_percentage for f in core_features) / len(core_features)
     
-    def is_ready_to_ship(self, min_completion: float = 0.80) -> bool:
+    def is_ready_to_ship(self, min_completion: float = 0.75) -> bool:
         """
         Determine if MVP is ready to ship.
         
         Logic:
-        - All core features must reach min_completion (default 80%)
+        - All core features must reach min_completion (default 75%, matches spec)
         - At least one feature must be at 100%
         """
         completion = self.core_feature_completion()
@@ -636,7 +638,7 @@ class ExecutionFirstMVPShipper:
             return False, {"error": "Release not found"}
         
         release = self.releases[release_id]
-        ready = release.is_ready_to_ship(min_completion=0.80)
+        ready = release.is_ready_to_ship(min_completion=0.75)
         completion = release.core_feature_completion()
         
         metrics = {
@@ -644,7 +646,7 @@ class ExecutionFirstMVPShipper:
             "version": release.version,
             "core_feature_completion": round(completion, 4),
             "ready_to_ship": ready,
-            "min_required_completion": 0.80,
+            "min_required_completion": 0.75,
             "features": [
                 {
                     "name": f.name,

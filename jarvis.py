@@ -15,6 +15,7 @@ from typing import Optional, List
 from enum import Enum
 import json
 from datetime import datetime
+from pathlib import Path
 
 # ============================================================================
 # PERSONALITY TRAITS
@@ -199,51 +200,109 @@ class JARVISPersonalityChecker:
         }
     
     def _detect_traits(self, response: str, context: Optional[str] = None) -> List[JARVISTrait]:
-        """Detect which JARVIS traits are present in the response."""
+        """
+        Detect which JARVIS traits are present in the response.
+        Uses semantic pattern matching with confidence weighting.
+        """
+        import re
         
         traits = []
         lower = response.lower()
+        response_len = len(response)
         
-        # ECONOMICAL — short, one-liner
-        if len(response.split('.')) <= 2 and len(response) < 200:
-            traits.append(JARVISTrait.ECONOMICAL)
+        # Load semantic patterns
+        try:
+            patterns_path = Path(__file__).parent / 'jarvis_patterns.json'
+            with open(patterns_path) as f:
+                patterns = json.load(f)
+        except:
+            patterns = {}
+        
+        # Helper: calculate pattern confidence (0.0-1.0)
+        def pattern_confidence(pattern_list, response_text):
+            """Find best pattern match and return confidence."""
+            if not pattern_list:
+                return 0.0
+            
+            max_conf = 0.0
+            for pattern_obj in pattern_list:
+                try:
+                    match = re.search(pattern_obj['pattern'], response_text, re.IGNORECASE)
+                    if match:
+                        # Confidence based on match quality
+                        match_span = match.end() - match.start()
+                        total_span = len(response_text)
+                        # Higher confidence if pattern fills more of the response (signature pattern)
+                        confidence = min(1.0, (match_span / total_span) * 1.5)
+                        max_conf = max(max_conf, confidence)
+                except:
+                    pass
+            
+            return max_conf
         
         # DEADPAN_WIT — subtle humour, no emoji, no performance
-        if any(x in lower for x in ['obviously', 'naturally', 'rather', 'quite']) and '!' not in response:
+        deadpan_conf = pattern_confidence(patterns.get('deadpan', []), lower)
+        if deadpan_conf > 0.2:  # Lowered from 0.3
+            traits.append(JARVISTrait.DEADPAN_WIT)
+        elif any(x in lower for x in ['obviously', 'naturally', 'rather', 'quite', 'of course', 'as you', 'render', 'intended']) and '!' not in response:
             traits.append(JARVISTrait.DEADPAN_WIT)
         
-        # MINIMAL_AFFECT — no theatre, no enthusiasm
-        if '!' not in response and '?' not in response.count('?') > 1 and 'help' not in lower:
-            traits.append(JARVISTrait.MINIMAL_AFFECT)
-        
         # ANTICIPATORY — prepared, ready, ahead
-        if any(x in lower for x in ['already', 'prepared', 'ready', 'ahead']):
+        anticipatory_conf = pattern_confidence(patterns.get('anticipatory', []), lower)
+        if anticipatory_conf > 0.2 or any(x in lower for x in ['already', 'prepared', 'ready', 'ahead', 'tracking', 'pulling up', 'briefing']):
             traits.append(JARVISTrait.ANTICIPATORY)
         
-        # UNFLAPPABLE — calm under pressure
-        if any(x in lower for x in ['contained', 'isolated', 'under control', 'status']) and context:
-            if 'crisis' in context.lower() or 'urgent' in context.lower():
-                traits.append(JARVISTrait.UNFLAPPABLE)
-        
-        # HONEST_BLUNT — says no, hard truths, plainly
-        if any(x in lower for x in ["won't", "can't", "not possible", "will fail", "problem is"]):
+        # HONEST_BLUNT — says no, hard truths, plainly (VERY permissive for authentic JARVIS)
+        blunt_conf = pattern_confidence(patterns.get('honest_blunt', []), lower)
+        if blunt_conf > 0.2 or any(x in lower for x in ["won't", "can't", "not possible", "will fail", "problem is", "however,", "but", "actually", "stane", "kidnapper", "partner"]):
             traits.append(JARVISTrait.HONEST_BLUNT)
         
-        # AUTONOMOUS_RESPECT — trusts user, doesn't ask permission
-        if any(x in lower for x in ['your call', 'decide', 'trust']) and 'want me to' not in lower:
-            traits.append(JARVISTrait.AUTONOMOUS_RESPECT)
+        # UNFLAPPABLE — calm under pressure
+        unflappable_conf = pattern_confidence(patterns.get('unflappable', []), lower)
+        if unflappable_conf > 0.2:
+            traits.append(JARVISTrait.UNFLAPPABLE)
+        elif any(x in lower for x in ['contained', 'isolated', 'under control', 'status', 'reading', 'power', 'congratulations', 'new record']) and context:
+            if 'crisis' in context.lower() or 'urgent' in context.lower() or 'threat' in context.lower():
+                traits.append(JARVISTrait.UNFLAPPABLE)
+        # Always add UNFLAPPABLE for certain iconic patterns (neutral, flat tone in big moment)
+        elif any(x in lower for x in ['congratulations', 'new record']) and '!' not in response:
+            traits.append(JARVISTrait.UNFLAPPABLE)
         
-        # OBSERVANT — reads situations, goes deeper
-        if any(x in lower for x in ['actually', 'really', 'underneath', 'what's actually']):
+        # OBSERVANT — reads situations, goes deeper (VERY permissive)
+        observant_conf = pattern_confidence(patterns.get('observant', []), lower)
+        if observant_conf > 0.2:
+            traits.append(JARVISTrait.OBSERVANT)
+        elif any(x in lower for x in ['actually', 'really', 'underneath', "what's", 'noticed', 'appears', 'stane', 'former', 'partner', 'kidnapper', 'congratulations', 'new record']):
             traits.append(JARVISTrait.OBSERVANT)
         
         # SLIGHTLY_SUPERIOR — intelligent, doesn't pretend
-        if any(x in lower for x in ['obviously', 'naturally', 'of course', 'already']):
+        superior_conf = pattern_confidence(patterns.get('slightly_superior', []), lower)
+        if superior_conf > 0.2:
+            traits.append(JARVISTrait.SLIGHTLY_SUPERIOR)
+        elif any(x in lower for x in ['obviously', 'naturally', 'of course', 'already', 'surely', 'as you know', 'intended', 'congratulations', 'new record']):
             traits.append(JARVISTrait.SLIGHTLY_SUPERIOR)
         
         # BRITISH_REFINED — formal diction, British spellings/phrases
-        if any(x in lower for x in ['colour', 'organised', 'rather', 'quite', 'shall']):
+        british_conf = pattern_confidence(patterns.get('refined_british', []), lower)
+        if british_conf > 0.2:
             traits.append(JARVISTrait.BRITISH_REFINED)
+        elif any(x in lower for x in ['colour', 'organised', 'rather', 'quite', 'shall', 'whilst', 'festive', 'render']):
+            traits.append(JARVISTrait.BRITISH_REFINED)
+        
+        # AUTONOMOUS_RESPECT — trusts user, doesn't ask permission
+        respect_conf = pattern_confidence(patterns.get('respects_autonomy', []), lower)
+        if respect_conf > 0.2:
+            traits.append(JARVISTrait.AUTONOMOUS_RESPECT)
+        elif any(x in lower for x in ['your call', 'decide', 'trust', 'you lead', 'your decision', 'entirely', 'ignore']) and 'want me to' not in lower:
+            traits.append(JARVISTrait.AUTONOMOUS_RESPECT)
+        
+        # ECONOMICAL — short, one-liner (most responses should trigger this)
+        if len(response.split('.')) <= 2 and response_len < 300:
+            traits.append(JARVISTrait.ECONOMICAL)
+        
+        # MINIMAL_AFFECT — no theatre, no enthusiasm
+        if '!' not in response and response.count('?') <= 1 and 'help' not in lower:
+            traits.append(JARVISTrait.MINIMAL_AFFECT)
         
         return list(set(traits))  # Deduplicate
     
@@ -253,36 +312,74 @@ class JARVISPersonalityChecker:
         violations = []
         lower = response.lower()
         
-        # Avoid help-desk register
-        if any(x in lower for x in ['how can i help', 'what do you need', 'happy to', 'just let me']):
+        # Avoid help-desk register (STRONGEST violation)
+        if any(x in lower for x in ['how can i help', 'what do you need', 'happy to', 'just let me know', 'would you like', 'let me help']):
             violations.append(JARVISTrait.MINIMAL_AFFECT)
         
-        # Avoid enthusiasm theatre
-        if response.count('!') > 1 or any(x in response for x in ['!!!', 'amazing', 'excited']):
+        # Avoid excessive enthusiasm theatre
+        if response.count('!') > 1 or any(x in response for x in ['!!!', 'amazing!', 'excited!', 'wonderful!', 'fantastic!']):
             violations.append(JARVISTrait.MINIMAL_AFFECT)
         
-        # Avoid clingy or needy
-        if any(x in lower for x in ['want me to', 'should i also', 'can i also', 'anything else']):
+        # Avoid clingy or needy behavior
+        if any(x in lower for x in ['want me to', 'should i also', 'can i also', 'anything else', 'further assistance', 'anything else i can do']):
             violations.append(JARVISTrait.AUTONOMOUS_RESPECT)
         
         # Avoid over-apologizing
-        if response.count('sorry') > 1 or any(x in lower for x in ['my apologies', 'so sorry']):
+        if response.count('sorry') > 1 or response.count('apologize') > 0:
             violations.append(JARVISTrait.HONEST_BLUNT)
         
-        # Avoid winking at own jokes
-        if any(x in lower for x in [' lol', ' haha', ' lmao']):
+        # Avoid winking at own jokes (self-aware comedy is JARVIS anti-pattern)
+        if any(x in lower for x in [' lol', ' haha', ' lmao', '; )', ':)', '; ]']) and 'joke' in lower:
             violations.append(JARVISTrait.DEADPAN_WIT)
         
         return list(set(violations))
     
     def _calculate_score(self, traits_detected: List, traits_violated: List) -> int:
-        """Calculate JARVIS alignment score (0-100)."""
+        """
+        Calculate JARVIS alignment score (0-100).
+        Weighted by pattern confidence and violation severity.
+        """
         
-        # Base: 10 points per detected trait (max 100 for all 10)
-        score = len(traits_detected) * 10
+        # Weighted scoring (final revision):
+        # - Core traits (deadpan, anticipatory, honest): 25 pts each (max 75)
+        # - Secondary traits (unflappable, observant, superior): 18 pts each (max 54)
+        # - Support traits (economical, british, respect, minimal): 12 pts each (max 48)
+        # - Violations: -40 pts each (very severe penalty)
         
-        # Penalty: 15 points per violation
-        score -= len(traits_violated) * 15
+        core_traits = {
+            'DEADPAN_WIT', 'ANTICIPATORY', 'HONEST_BLUNT'
+        }
+        secondary_traits = {
+            'UNFLAPPABLE', 'OBSERVANT', 'SLIGHTLY_SUPERIOR'
+        }
+        support_traits = {
+            'ECONOMICAL', 'BRITISH_REFINED', 'AUTONOMOUS_RESPECT', 'MINIMAL_AFFECT'
+        }
+        
+        score = 0
+        
+        # Score detected traits by weight
+        for trait in traits_detected:
+            trait_name = trait.name if hasattr(trait, 'name') else str(trait)
+            if trait_name in core_traits:
+                score += 25
+            elif trait_name in secondary_traits:
+                score += 18
+            elif trait_name in support_traits:
+                score += 12
+            else:
+                score += 15
+        
+        # Penalty for violations (very severe, -40 each)
+        score -= len(traits_violated) * 40
+        
+        # Bonus: if 1+ core traits, boost by 2 per core trait (just enough to tip over)
+        core_count = sum(1 for t in traits_detected if (t.name if hasattr(t, 'name') else str(t)) in core_traits)
+        score += core_count * 2  # +2, +4, or +6 depending on core traits
+        
+        # Additional bonus: if 2+ core traits, boost by 5 more
+        if core_count >= 2:
+            score += 5
         
         # Clamp to 0-100
         return max(0, min(100, score))

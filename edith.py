@@ -202,6 +202,48 @@ class VerificationEngine:
 # ACCESS LOGGING
 # ============================================================================
 
+class RateLimiter:
+    """Rate limiter for vault access — prevents brute force attacks."""
+    
+    def __init__(self, max_attempts: int = 5, window_seconds: int = 300):
+        """
+        Initialize rate limiter.
+        
+        Args:
+            max_attempts: Max failed attempts before lockout (default 5)
+            window_seconds: Time window for counting attempts (default 5 min)
+        """
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self.attempts: List[datetime] = []
+    
+    def is_rate_limited(self) -> bool:
+        """Check if rate limit has been exceeded."""
+        now = datetime.utcnow()
+        cutoff = now - timedelta(seconds=self.window_seconds)
+        
+        # Remove old attempts outside the window
+        self.attempts = [t for t in self.attempts if t > cutoff]
+        
+        # Check if we've exceeded limit
+        return len(self.attempts) >= self.max_attempts
+    
+    def record_attempt(self):
+        """Record a failed attempt."""
+        self.attempts.append(datetime.utcnow())
+    
+    def reset(self):
+        """Reset the attempt counter (successful access clears attempts)."""
+        self.attempts = []
+    
+    def get_remaining_attempts(self) -> int:
+        """Get remaining attempts before lockout."""
+        now = datetime.utcnow()
+        cutoff = now - timedelta(seconds=self.window_seconds)
+        self.attempts = [t for t in self.attempts if t > cutoff]
+        return max(0, self.max_attempts - len(self.attempts))
+
+
 class AccessLogger:
     """Encrypted audit trail for vault access."""
     
@@ -217,6 +259,9 @@ class AccessLogger:
                 'last_accessed': None,
                 'access_count': 0,
                 'failed_attempts': 0,
+                'denied_count': 0,
+                'rate_limit_blocks': 0,
+                'events': []  # Granular event log
             }
             with open(self.log_file, 'w') as f:
                 json.dump(initial, f, indent=2)
@@ -224,42 +269,93 @@ class AccessLogger:
     
     def log_access(self, operation: str, service: str, status: str, details: str = ''):
         """
-        Log vault access event.
+        Log vault access event with granular details.
         
         Args:
-            operation: 'read', 'write', 'verify', 'list'
+            operation: 'read', 'write', 'verify', 'list', 'delete'
             service: Service name being accessed
-            status: 'success', 'failure', 'denied'
+            status: 'success', 'failure', 'denied', 'RECOVERY_MODE'
             details: Additional context
         """
         with open(self.log_file, 'r') as f:
             log_data = json.load(f)
         
-        log_data['last_accessed'] = datetime.utcnow().isoformat() + 'Z'
+        timestamp = datetime.utcnow().isoformat() + 'Z'
+        log_data['last_accessed'] = timestamp
         
+        # Record granular event
+        event = {
+            'timestamp': timestamp,
+            'operation': operation,
+            'service': service,
+            'status': status,
+            'details': details
+        }
+        log_data['events'].append(event)
+        
+        # Update aggregate metrics
         if status == 'success':
             log_data['access_count'] += 1
         elif status == 'failure':
             log_data['failed_attempts'] += 1
+        elif status == 'denied':
+            log_data['denied_count'] += 1
+            # Check if it's a rate limit denial
+            if 'Rate limit' in details or 'Too many' in details:
+                log_data['rate_limit_blocks'] += 1
+        
+        # Keep only last 500 events (audit trail pruning)
+        if len(log_data['events']) > 500:
+            log_data['events'] = log_data['events'][-500:]
         
         with open(self.log_file, 'w') as f:
             json.dump(log_data, f, indent=2)
         os.chmod(self.log_file, 0o600)
     
     def get_entries(self, limit: int = 50) -> List[Dict]:
-        """Get recent access log (returns stats only, detailed logging not implemented)."""
+        """Get recent access log entries (detailed granular events)."""
         with open(self.log_file, 'r') as f:
             log_data = json.load(f)
         
-        # Return current stats as a single entry
-        return [log_data]
+        # Return last N events
+        events = log_data.get('events', [])
+        return events[-limit:] if limit else events
     
     def get_stats(self) -> Dict:
-        """Get vault access statistics."""
+        """Get vault access statistics and security metrics."""
         with open(self.log_file, 'r') as f:
             log_data = json.load(f)
         
-        return log_data
+        # Calculate derived metrics
+        total_events = len(log_data.get('events', []))
+        stats = {
+            'created': log_data['created'],
+            'last_accessed': log_data['last_accessed'],
+            'total_events': total_events,
+            'successful_accesses': log_data['access_count'],
+            'failed_attempts': log_data['failed_attempts'],
+            'denied_accesses': log_data['denied_count'],
+            'rate_limit_blocks': log_data['rate_limit_blocks'],
+            'security_score': self._calculate_security_score(log_data)
+        }
+        return stats
+    
+    def _calculate_security_score(self, log_data: Dict) -> float:
+        """
+        Calculate security score (0-100) based on access patterns.
+        Higher is better: low denial rate, few failed attempts, no rate limits.
+        """
+        total = log_data['access_count'] + log_data['failed_attempts'] + log_data['denied_count']
+        if total == 0:
+            return 100.0  # No activity = secure
+        
+        success_rate = log_data['access_count'] / total
+        failure_rate = log_data['failed_attempts'] / total
+        denial_rate = log_data['denied_count'] / total
+        
+        # Base score on success rate, penalize failures and denials
+        score = (success_rate * 100) - (failure_rate * 20) - (denial_rate * 30)
+        return max(0, min(100, score))
 
 
 # ============================================================================
@@ -278,13 +374,14 @@ class EDITHVault:
     - Fernet (AES-256-GCM) encryption
     """
     
-    def __init__(self, vault_dir: Path = None, require_verification: bool = True):
+    def __init__(self, vault_dir: Path = None, require_verification: bool = True, override_uuid: str = None):
         """
         Initialize EDITH vault.
         
         Args:
             vault_dir: Path to vault directory (default: ~/.hermes/.edith)
             require_verification: Enforce 3/3 verification for all operations
+            override_uuid: (RECOVERY ONLY) Use this UUID instead of current hardware UUID
         
         Raises:
             FileNotFoundError: If vault directory doesn't exist
@@ -295,6 +392,7 @@ class EDITHVault:
         
         self.vault_dir = Path(vault_dir)
         self.require_verification = require_verification
+        self.override_uuid = override_uuid
         
         # Validate vault exists
         if not self.vault_dir.exists():
@@ -307,11 +405,20 @@ class EDITHVault:
         if not self.hardware_uuid:
             raise ValueError("Invalid vault metadata: missing hardware_uuid")
         
-        # Initialize engines
-        self.encryption = EncryptionEngine(self.hardware_uuid)
-        self.obfuscation = ObfuscationEngine(self.hardware_uuid)
+        # If UUID override provided (recovery mode), use it for decryption
+        if override_uuid:
+            self.logger = AccessLogger(self.vault_dir / 'access.log')
+            self.logger.log_access('vault_recovery_attempt', override_uuid, status='RECOVERY_MODE')
+            self.encryption = EncryptionEngine(override_uuid)
+            self.obfuscation = ObfuscationEngine(override_uuid)
+        else:
+            # Normal mode: use current hardware UUID
+            self.encryption = EncryptionEngine(self.hardware_uuid)
+            self.obfuscation = ObfuscationEngine(self.hardware_uuid)
+        
         self.verification = VerificationEngine(self.encryption.cipher)
         self.logger = AccessLogger(self.vault_dir / 'access.log')
+        self.rate_limiter = RateLimiter(max_attempts=5, window_seconds=300)  # 5 attempts per 5 min
         
         # Load vault state
         self.services_map = self._load_services_map()
@@ -333,20 +440,33 @@ class EDITHVault:
         return metadata
     
     def _load_services_map(self) -> Dict[str, str]:
-        """Load service name → obfuscated key mapping."""
-        services_map_path = self.vault_dir / 'services.map'
+        """Load service name → obfuscated key mapping (encrypted)."""
+        services_map_path = self.vault_dir / 'services.map.enc'
         if not services_map_path.exists():
             return {}
         
-        with open(services_map_path, 'r') as f:
-            return json.load(f)
+        try:
+            with open(services_map_path, 'r') as f:
+                encrypted_data = f.read()
+            # Decrypt the services map (returns dict directly)
+            decrypted_map = self.encryption.decrypt(encrypted_data)
+            return decrypted_map if isinstance(decrypted_map, dict) else {}
+        except Exception as e:
+            self.logger.log_access('read', 'services_map', 'failure', f'Failed to load services map: {str(e)}')
+            return {}
     
     def _save_services_map(self):
-        """Save services map to disk."""
-        services_map_path = self.vault_dir / 'services.map'
-        with open(services_map_path, 'w') as f:
-            json.dump(self.services_map, f)
-        os.chmod(services_map_path, 0o600)
+        """Save services map to disk (encrypted)."""
+        services_map_path = self.vault_dir / 'services.map.enc'
+        try:
+            # Encrypt the services map (encrypt expects a dict)
+            encrypted = self.encryption.encrypt(self.services_map)
+            with open(services_map_path, 'w') as f:
+                f.write(encrypted)
+            os.chmod(services_map_path, 0o600)
+            self.logger.log_access('write', 'services_map', 'success', 'Services map saved (encrypted)')
+        except Exception as e:
+            self.logger.log_access('write', 'services_map', 'failure', f'Failed to save services map: {str(e)}')
     
     def _load_vault_data(self) -> Dict[str, Any]:
         """Load vault data (JSON mapping of obfuscated keys to Fernet tokens)."""
@@ -416,12 +536,23 @@ class EDITHVault:
             self.logger.log_access('read', service, 'failure', 'Service not found')
             raise KeyError(f"Service not found: {service}")
         
-        # Verification challenge (3/3)
+        # Verification challenge (3/3) with rate limiting
         if verify:
+            # Check rate limit before challenge
+            if self.rate_limiter.is_rate_limited():
+                remaining = self.rate_limiter.get_remaining_attempts()
+                self.logger.log_access('read', service, 'denied', f'Rate limit exceeded. Try again in 5 min.')
+                raise ValueError(f"Too many failed attempts. Please try again in 5 minutes.")
+            
             print(f"\n--- Verification Required for '{service}' ---")
+            print(f"Remaining attempts: {self.rate_limiter.get_remaining_attempts()}")
+            
             if not self.verification.challenge(num_questions=3, required_correct=3):
+                self.rate_limiter.record_attempt()  # Record failed attempt
                 self.logger.log_access('read', service, 'denied', 'Verification failed')
                 raise ValueError("Verification failed. Credential access denied.")
+            
+            self.rate_limiter.reset()  # Clear attempts on success
         
         # Retrieve credential
         obfuscated_key = self.services_map[service]
@@ -571,6 +702,107 @@ class EDITHVault:
             return True
         except Exception:
             return False
+    
+    # ========================================================================
+    # UUID RECOVERY FUNCTIONS
+    # ========================================================================
+    
+    def migrate_to_hardware_uuid(self, target_uuid: str = None) -> bool:
+        """
+        Migrate vault from original hardware UUID to current/target hardware UUID.
+        
+        Args:
+            target_uuid: Target hardware UUID (default: None = use current system UUID)
+        
+        Returns:
+            True if migration successful, False otherwise
+        
+        Raises:
+            ValueError: If vault cannot be decrypted with original UUID
+        """
+        if target_uuid is None:
+            # Get current hardware UUID
+            try:
+                import uuid as uuid_module
+                target_uuid = str(uuid_module.getnode())
+            except Exception:
+                raise ValueError("Cannot determine current hardware UUID")
+        
+        try:
+            # Step 1: Create new vault data with target UUID
+            new_encryption = EncryptionEngine(target_uuid)
+            new_obfuscation = ObfuscationEngine(target_uuid)
+            
+            # Step 2: Decrypt all credentials with original UUID
+            decrypted_creds = {}
+            for obf_key, encrypted_token in self.vault_data.items():
+                try:
+                    decrypted_creds[obf_key] = self.encryption.decrypt(encrypted_token)
+                except Exception as e:
+                    self.logger.log_access('migration_decrypt_fail', str(target_uuid), status='FAIL')
+                    raise ValueError(f"Failed to decrypt credential {obf_key}: {e}")
+            
+            # Step 3: Re-encrypt with new UUID
+            new_vault_data = {}
+            for obf_key, plaintext in decrypted_creds.items():
+                new_vault_data[obf_key] = new_encryption.encrypt(plaintext)
+            
+            # Step 4: Update metadata with new UUID
+            self.metadata['hardware_uuid'] = target_uuid
+            self.metadata['migrated_from_uuid'] = self.hardware_uuid
+            self.metadata['last_migration'] = datetime.now().isoformat()
+            
+            # Step 5: Persist new state
+            self._save_metadata()
+            self.vault_data = new_vault_data
+            self._save_vault_data()
+            
+            # Step 6: Update recovery.json
+            self._update_recovery_status('completed', target_uuid)
+            
+            self.logger.log_access('migration_complete', target_uuid, status='OK')
+            
+            # Step 7: Reinitialize with new UUID
+            self.hardware_uuid = target_uuid
+            self.encryption = new_encryption
+            self.obfuscation = new_obfuscation
+            
+            return True
+        
+        except Exception as e:
+            self.logger.log_access('migration_fail', target_uuid, status=f'ERROR: {e}')
+            return False
+    
+    def _save_metadata(self):
+        """Save vault metadata to disk."""
+        metadata_path = self.vault_dir / 'metadata.json'
+        with open(metadata_path, 'w') as f:
+            json.dump(self.metadata, f, indent=2)
+        os.chmod(metadata_path, 0o600)
+    
+    def _update_recovery_status(self, status: str, uuid: str):
+        """Update recovery.json with migration status."""
+        recovery_path = self.vault_dir / 'recovery.json'
+        try:
+            if recovery_path.exists():
+                with open(recovery_path, 'r') as f:
+                    recovery = json.load(f)
+            else:
+                recovery = {
+                    'original_uuid': self.metadata.get('hardware_uuid'),
+                    'current_uuid': uuid,
+                    'recovery_methods': ['migrate_to_hardware_uuid']
+                }
+            
+            recovery['migration_status'] = status
+            recovery['last_migration_attempt'] = datetime.now().isoformat()
+            recovery['current_uuid'] = uuid
+            
+            with open(recovery_path, 'w') as f:
+                json.dump(recovery, f, indent=2)
+            os.chmod(recovery_path, 0o600)
+        except Exception as e:
+            self.logger.log_access('recovery_status_update_fail', uuid, status=f'ERROR: {e}')
 
 
 # ============================================================================
