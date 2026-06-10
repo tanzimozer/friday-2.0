@@ -38,7 +38,6 @@ import uuid
 import time
 import base64
 import random
-import gzip
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, List, Tuple
@@ -357,76 +356,6 @@ class AccessLogger:
         # Base score on success rate, penalize failures and denials
         score = (success_rate * 100) - (failure_rate * 20) - (denial_rate * 30)
         return max(0, min(100, score))
-    
-    def compress_old_events(self, days_threshold: int = 7) -> int:
-        """Compress events older than threshold days. Returns count compressed."""
-        with open(self.log_file, 'r') as f:
-            log_data = json.load(f)
-        
-        now = datetime.utcnow()
-        cutoff = now - timedelta(days=days_threshold)
-        
-        compressed = []
-        recent = []
-        
-        for event in log_data['events']:
-            # Parse timestamp (handle both 'Z' suffix and timezone-aware formats)
-            ts_str = event['timestamp'].replace('Z', '')
-            if '+' in ts_str:
-                event_dt = datetime.fromisoformat(ts_str.split('+')[0])
-            else:
-                event_dt = datetime.fromisoformat(ts_str)
-            
-            if event_dt < cutoff:
-                compressed.append(event)
-            else:
-                recent.append(event)
-        
-        if not compressed:
-            return 0
-        
-        # Gzip compress the old events
-        compressed_json = json.dumps(compressed).encode('utf-8')
-        compressed_bytes = gzip.compress(compressed_json, compresslevel=9)
-        compressed_b64 = base64.b64encode(compressed_bytes).decode('utf-8')
-        
-        # Store compressed events under special key
-        log_data['_compressed_events'] = {
-            'data': compressed_b64,
-            'count': len(compressed),
-            'compressed_at': now.isoformat() + 'Z',
-            'original_size': len(compressed_json),
-            'compressed_size': len(compressed_bytes),
-            'ratio': round((1 - len(compressed_bytes) / len(compressed_json)) * 100, 1)
-        }
-        
-        # Keep only recent events uncompressed
-        log_data['events'] = recent
-        
-        with open(self.log_file, 'w') as f:
-            json.dump(log_data, f, indent=2)
-        
-        return len(compressed)
-    
-    def get_all_events(self, limit: int = None) -> List[Dict]:
-        """Get all events (decompresses old events if needed). Returns up to limit."""
-        with open(self.log_file, 'r') as f:
-            log_data = json.load(f)
-        
-        events = log_data.get('events', [])
-        
-        # Decompress old events if present
-        if '_compressed_events' in log_data:
-            try:
-                compressed_b64 = log_data['_compressed_events']['data']
-                compressed_bytes = base64.b64decode(compressed_b64)
-                decompressed_json = gzip.decompress(compressed_bytes).decode('utf-8')
-                old_events = json.loads(decompressed_json)
-                events = old_events + events  # Old first, recent last
-            except Exception as e:
-                print(f"Warning: Failed to decompress old events: {e}")
-        
-        return events[:limit] if limit else events
 
 
 # ============================================================================
@@ -636,88 +565,6 @@ class EDITHVault:
         
         return credential
     
-    
-    def get_credentials_batch(self, services: List[str], verify: bool = None) -> Dict[str, Dict[str, Any]]:
-        """
-        Retrieve multiple credentials in a single batch operation.
-        
-        Optimization: Single decrypt pass + single verify for N credentials.
-        This is significantly faster than calling get_credential() N times.
-        
-        Args:
-            services: List of service names (e.g., ['google', 'github', 'aws'])
-            verify: Override verification requirement (default: use self.require_verification)
-        
-        Returns:
-            Dict mapping service name → credential dict
-            Example: {
-                'google': {'token': '...', 'metadata': {...}},
-                'github': {'token': '...', 'metadata': {...}},
-                ...
-            }
-        
-        Raises:
-            ValueError: If any service not found or verification failed
-            ValueError: If verification failed
-        
-        Performance:
-            - 7 credentials: ~85ms (vs 175ms with individual get_credential calls)
-            - 2x latency reduction achieved through:
-              1. Single verification challenge (counts as 1 rate limit attempt)
-              2. Batch decryption (single crypto pass)
-              3. Minimal overhead per additional credential
-        """
-        verify = verify if verify is not None else self.require_verification
-        
-        # Validate all services exist upfront
-        missing_services = [s for s in services if s not in self.services_map]
-        if missing_services:
-            self.logger.log_access('batch_read', f'[{len(services)} items]', 'failure', 
-                                   f'Services not found: {", ".join(missing_services)}')
-            raise KeyError(f"Services not found: {', '.join(missing_services)}")
-        
-        # Single verification challenge for entire batch (counts as 1 attempt)
-        if verify:
-            # Check rate limit before challenge
-            if self.rate_limiter.is_rate_limited():
-                remaining = self.rate_limiter.get_remaining_attempts()
-                self.logger.log_access('batch_read', f'[{len(services)} items]', 'denied', 
-                                       f'Rate limit exceeded. {remaining} attempts remaining.')
-                raise ValueError(f"Too many failed attempts. Please try again in 5 minutes.")
-            
-            print(f"\n--- Batch Verification Required for {len(services)} credentials ---")
-            print(f"Remaining attempts: {self.rate_limiter.get_remaining_attempts()}")
-            
-            # Single 3/3 verification for entire batch
-            if not self.verification.challenge(num_questions=3, required_correct=3):
-                self.rate_limiter.record_attempt()  # Record as single failed attempt
-                service_list = ', '.join(services[:3]) + (f'... +{len(services)-3} more' if len(services) > 3 else '')
-                self.logger.log_access('batch_read', service_list, 'denied', 
-                                       'Verification failed')
-                raise ValueError("Verification failed. Batch access denied.")
-            
-            self.rate_limiter.reset()  # Clear attempts on success (single reset for batch)
-        
-        # Batch retrieval: extract all credentials
-        credentials = {}
-        for service in services:
-            obfuscated_key = self.services_map[service]
-            if obfuscated_key not in self.vault_data:
-                self.logger.log_access('batch_read', service, 'failure', 
-                                       'Credential data corrupted')
-                raise KeyError(f"Credential data missing for service: {service}")
-            
-            credential = self.vault_data[obfuscated_key]
-            credentials[service] = credential
-        
-        # Log single batch read operation (not N operations)
-        service_list = ', '.join(services[:3]) + (f'... +{len(services)-3} more' if len(services) > 3 else '')
-        self.logger.log_access('batch_read', service_list, 'success', 
-                               f'Batch retrieved {len(services)} credentials')
-        
-        return credentials
-
-
     def set_credential(self, service: str, credential: Dict[str, Any], verify: bool = None) -> None:
         """
         Store credential for a service.
