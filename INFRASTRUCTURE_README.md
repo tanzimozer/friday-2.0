@@ -1,0 +1,114 @@
+# Friday 2.0 Infrastructure
+
+**Status:** Production-Ready  
+**Version:** 2.0  
+**Last Updated:** June 10, 2026
+
+---
+
+## Overview
+
+Friday 2.0 is a comprehensive AI assistant infrastructure built on two core pillars:
+
+1. **Security Hardening** (EDITH 2.0 Vault)
+2. **Operating System Alignment** (Personal Framework)
+
+All code and specifications are included in this repository.
+
+---
+
+## Quick Start
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Check infrastructure status
+python main.py
+```
+
+---
+
+## Architecture
+
+### Pillar 1: EDITH 2.0 Vault (Security)
+
+- **Hardware UUID Binding** — Decryption locked to machine hardware
+- **AES-256-GCM Encryption** — All credentials encrypted at rest
+- **3/3 Verification Protocol** — Security questions required for sensitive ops
+- **Obfuscated Naming** — Service names hashed to prevent enumeration
+- **Access Logging** — Complete audit trail of all operations
+
+**Module:** `edith.py`
+
+### Pillar 2: Personal Framework (Operating System)
+
+Five core decision principles codified as explicit rules:
+
+1. **30-Day Rule** — Auto-design recurring tasks every 30 days
+2. **0.75 Confidence** — Execute at confidence ≥0.75, ask if <0.75
+3. **Intent Inference** — Parse patterns; deliver on match ≥3 occurrences in 30 days
+4. **Silence Protocol** — Continue autonomously when idle >60 minutes
+5. **Execution-First** — Ship MVP at core completion ≥80%, timeline ≤24h
+
+**Module:** `framework.py`
+
+---
+
+## Documentation
+
+- **FRIDAY_2.0_QUICK_REFERENCE.md** — Decision lookup card
+- **FRIDAY_2.0_IMPLEMENTATION_SPECIFICATION.md** — Operational guide with checklists
+- **FRIDAY_2.0_TECHNICAL_ARCHITECTURE.md** — Detailed design with pseudocode
+- **FRIDAY_2.0_DESIGN_DECISIONS.md** — Design decisions & requirements
+- **FRIDAY_2.0_INDEX.md** — Master index & roadmap
+- **FRAMEWORK_README.md** — Personal Framework technical reference
+
+---
+
+## Testing
+
+Each module is production-ready and tested:
+
+```bash
+# Test EDITH 2.0 vault
+python -c "from edith import EDITHVault; v = EDITHVault(require_verification=False); print(f'Services: {v.list_services()}')"
+
+# Test Personal Framework
+python -c "from framework import PersonalFramework; f = PersonalFramework(); print(f'Health: {f.get_framework_health()}')"
+```
+
+---
+
+## Status
+
+✅ EDITH 2.0 Vault — Complete & Encrypted  
+✅ Personal Framework — Complete & Operational  
+✅ Integration — Active  
+✅ Logging & Audit — Enabled  
+
+**Ready for deployment.**
+
+---
+
+## Next Steps
+
+- Deploy to production environment
+- Integrate with CI/CD pipeline
+- Monitor access logs and framework decisions
+- Collect metrics on framework effectiveness
+
+---
+
+## Security Notes
+
+- EDITH 2.0 vault decryption is hardware-bound (UUID-based)
+- 3/3 verification protocol required for sensitive operations
+- All credentials encrypted at rest with AES-256-GCM
+- Complete audit trail maintained in access logs
+- Personal Framework decisions logged to `framework_decisions.log`
+
+---
+
+**Built by Veronica (Tanzim's deployment agent)**  
+**Aligned with Tanzim's specifications from Friday 2.0 Design Documents**
