@@ -1,0 +1,228 @@
+{
+  "timestamp": "2026-06-14T16:40:07.385017",
+  "version": "2.0",
+  "total_chars_used": "~5,200 / 10,000",
+  "available_capacity": "~4,800 chars",
+  "LAYER_1_CORE_IDENTITY": {
+    "user": "Tanzim Ozer",
+    "role": "CTO/Founder TIMBR",
+    "location": "Seattle, WA",
+    "timezone": "America/Los_Angeles",
+    "devices": [
+      "Mac Mini (aarch64)",
+      "iPhone 14 Pro Max",
+      "Apple Watch"
+    ],
+    "emails": {
+      "professional": "tanzim.seattle@gmail.com",
+      "personal": "tanzimx@icloud.com"
+    }
+  },
+  "LAYER_2_CREDENTIALS_INDEX": {
+    "instruction": "Do not store secrets. Store routing instructions only.",
+    "services": {
+      "google_oauth": {
+        "service_index": "indexed_service_0",
+        "lookup_instruction": "Query EDITH.credentials.google_oauth \u2192 validate refresh token \u2192 auto-refresh if needed",
+        "fallback": "disk read from ~/.hermes/google_token.json"
+      },
+      "github_pat": {
+        "service_index": "indexed_service_1",
+        "lookup_instruction": "Query EDITH.credentials.github \u2192 validate token expiration \u2192 alert if <14 days",
+        "fallback": "disk read from ~/.hermes/.github_credentials"
+      },
+      "icloud": {
+        "service_index": "indexed_service_2",
+        "lookup_instruction": "Query EDITH.credentials.icloud \u2192 validate tanzimx@icloud.com \u2192 2FA check",
+        "fallback": "prompt user for credentials"
+      },
+      "instagram": {
+        "service_index": "indexed_service_3",
+        "lookup_instruction": "Query EDITH.credentials.instagram \u2192 validate session \u2192 rotate if expired",
+        "fallback": "prompt user for login"
+      }
+    }
+  },
+  "LAYER_3_RECURRING_INTERACTIONS": {
+    "daily_contacts": [
+      "Mom (call/text)",
+      "TIMBR Team (Slack)",
+      "Gmail inbox"
+    ],
+    "weekly_contacts": [
+      "Tahmeed (session)",
+      "Maureen (PT updates)",
+      "Project reviews"
+    ],
+    "frequency_based_routing": "Check persistent memory before scheduling follow-ups"
+  },
+  "LAYER_4_ACTIVE_PROJECTS": {
+    "fitness_intelligence": {
+      "current_stage": "Stage 2 (Strength 1\u20133)",
+      "track": "Male/MB (Muscle Building)",
+      "approved_pairings": 34,
+      "forbidden_pairings": 6,
+      "sheet_id": "1Tb3OHcuIkCIbIL59k60BhBEiCMw5fnjOenUO1isBefo",
+      "last_updated": "2026-06-14T16:40:07.384994"
+    },
+    "timbr": {
+      "project": "TIMBR Marketplace MVP",
+      "status": "MVP feature branches merged, deploy pending",
+      "repositories": [
+        "Tanzim_Frameworks",
+        "IG-Hunter"
+      ],
+      "last_updated": "2026-06-14T16:40:07.384996"
+    },
+    "ig1_protocol": {
+      "project": "IG-1 Protocol (Instagram Handle Analysis)",
+      "status": "22 handles consolidated, pattern recognition phase",
+      "sheet_id": "TBD",
+      "last_updated": "2026-06-14T16:40:07.384996"
+    }
+  },
+  "LAYER_5_OPERATIONAL_RULES": {
+    "timezone_enforcement": "America/Los_Angeles (PDT, UTC-7)",
+    "proactive_skill_loading": "Auto-call skills from skill_index without re-asking",
+    "memory_refresh_schedule": "0 5 * * * (5 AM PDT daily)",
+    "group_chat_silence": "Respond only when directly addressed",
+    "execution_first": "Answer first, context after, only if asked"
+  },
+  "SKILL_INDEX": {
+    "gmail_automation": {
+      "skill_name": "gmail-automation",
+      "trigger_keywords": [
+        "gmail",
+        "email",
+        "inbox",
+        "check mail"
+      ],
+      "instruction": "Auto-use gmail-automation for Gmail tasks; retrieve email list, parse unread, filter for action items",
+      "credential_source": "EDITH.credentials.google_oauth",
+      "auto_bind": true
+    },
+    "github_ops": {
+      "skill_name": "github-ops-skill",
+      "trigger_keywords": [
+        "github",
+        "commit",
+        "push",
+        "pull",
+        "merge"
+      ],
+      "instruction": "Auto-use github-ops for GitHub tasks; handle authentication, branch management, PR operations",
+      "credential_source": "EDITH.credentials.github",
+      "auto_bind": true
+    },
+    "fitness_intelligence": {
+      "skill_name": "fitness-intelligence-api",
+      "trigger_keywords": [
+        "workout",
+        "stage",
+        "pairing",
+        "exercise",
+        "routine"
+      ],
+      "instruction": "Auto-use fitness-intelligence for exercise assignment; load stage state, validate pairings, route to API",
+      "credential_source": "EDITH.credentials.google_oauth",
+      "auto_bind": true
+    },
+    "calendar_sync": {
+      "skill_name": "google-calendar-sync",
+      "trigger_keywords": [
+        "calendar",
+        "schedule",
+        "meeting",
+        "block",
+        "event"
+      ],
+      "instruction": "Auto-use google-calendar-sync for calendar operations; read/write events, manage availability",
+      "credential_source": "EDITH.credentials.google_oauth",
+      "auto_bind": true
+    }
+  },
+  "BROWSER_CACHE": {
+    "cache_strategy": "visual_hash_memoization",
+    "tracked_pages": {
+      "gmail_inbox": {
+        "url_pattern": "https://mail.google.com/*",
+        "cache_key": "gmail_inbox_layout",
+        "update_frequency": "daily",
+        "fallback": "use_snapshot_on_hash_match"
+      },
+      "google_sheets": {
+        "url_pattern": "https://docs.google.com/spreadsheets/*",
+        "cache_key": "sheets_layout",
+        "update_frequency": "daily",
+        "fallback": "use_snapshot_on_hash_match"
+      },
+      "github_dashboard": {
+        "url_pattern": "https://github.com/dashboard*",
+        "cache_key": "github_dashboard_layout",
+        "update_frequency": "daily",
+        "fallback": "use_snapshot_on_hash_match"
+      },
+      "slack_workspace": {
+        "url_pattern": "https://app.slack.com/*",
+        "cache_key": "slack_layout",
+        "update_frequency": "hourly",
+        "fallback": "use_snapshot_on_hash_match"
+      }
+    },
+    "memoization_logic": "If page_hash == cached_hash, skip vision_analysis; use browser_snapshot instead"
+  },
+  "AUTO_BINDING_RULES": {
+    "inference_rules": {
+      "gmail_task": {
+        "keywords": [
+          "gmail",
+          "email",
+          "inbox",
+          "unread",
+          "check mail"
+        ],
+        "auto_skill": "gmail-automation",
+        "auto_action": "retrieve_emails()",
+        "credential_auto_inject": true
+      },
+      "github_task": {
+        "keywords": [
+          "github",
+          "commit",
+          "push",
+          "pull",
+          "merge",
+          "repo"
+        ],
+        "auto_skill": "github-ops-skill",
+        "auto_action": "handle_git_operation()",
+        "credential_auto_inject": true
+      },
+      "calendar_task": {
+        "keywords": [
+          "calendar",
+          "schedule",
+          "meeting",
+          "event",
+          "block"
+        ],
+        "auto_skill": "google-calendar-sync",
+        "auto_action": "manage_calendar()",
+        "credential_auto_inject": true
+      },
+      "fitness_task": {
+        "keywords": [
+          "workout",
+          "exercise",
+          "stage",
+          "routine",
+          "pairing"
+        ],
+        "auto_skill": "fitness-intelligence-api",
+        "auto_action": "assign_exercises()",
+        "credential_auto_inject": true
+      }
+    },
+    "binding_cost": "Zero-overhead. Skill name + action cached in memory, no re-definition load"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "version": "2.0",
+  "created": "2026-06-14T16:40:07.384897",
+  "encryption": "AES-256-GCM",
+  "access_control": {
+    "hardware_uuid": "auto",
+    "verification_questions": {
+      "q1": {
+        "question": "Favorite football team?",
+        "answer_hash": "real_madrid"
+      },
+      "q2": {
+        "question": "Favorite character?",
+        "answer_hash": "pepper_potts"
+      },
+      "q3": {
+        "question": "Favorite person?",
+        "answer_hash": "myself"
+      }
+    },
+    "required_answers": 3
+  },
+  "credentials": {
+    "google_oauth": {
+      "services": [
+        "gmail",
+        "drive",
+        "docs",
+        "sheets",
+        "chat"
+      ],
+      "project_id": "job-scraping-494906",
+      "status": "active",
+      "auto_refresh": true,
+      "refresh_schedule": "0 5 * * *"
+    },
+    "github": {
+      "token_name": "Friday-EDITH",
+      "scopes": [
+        "repo",
+        "gist",
+        "user"
+      ],
+      "repositories": [
+        "Tanzim_Frameworks",
+        "IG-Hunter",
+        "TERRAjob"
+      ],
+      "expiration": "2027-06-09"
+    }
+  }
+}
